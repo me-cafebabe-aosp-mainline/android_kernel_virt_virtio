@@ -66,6 +66,7 @@ dtb-$(CONFIG_ARCH_QCOM)	+= msm8939-samsung-a7.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= msm8939-sony-xperia-kanuti-tulip.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= msm8939-wingtech-wt82918.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= msm8939-wingtech-wt82918hd.dtb
+dtb-$(CONFIG_ARCH_QCOM)	+= msm8940-xiaomi-santoni.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= msm8953-asus-ze520kl.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= msm8953-asus-ze552kl.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= msm8953-huawei-milan.dtb
