@@ -7,6 +7,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/regulator/consumer.h>
 
 #include <video/mipi_display.h>
 
@@ -17,6 +18,7 @@
 struct sharp_ft8716 {
 	struct drm_panel panel;
 	struct mipi_dsi_device *dsi;
+	struct regulator_bulk_data supplies[2];
 	struct gpio_desc *reset_gpio;
 	bool prepared;
 };
@@ -25,6 +27,14 @@ static inline struct sharp_ft8716 *to_sharp_ft8716(struct drm_panel *panel)
 {
 	return container_of(panel, struct sharp_ft8716, panel);
 }
+
+#define dsi_dcs_write_seq(dsi, seq...) do {				\
+		static const u8 d[] = { seq };				\
+		int ret;						\
+		ret = mipi_dsi_dcs_write_buffer(dsi, d, ARRAY_SIZE(d));	\
+		if (ret < 0)						\
+			return ret;					\
+	} while (0)
 
 static void sharp_ft8716_reset(struct sharp_ft8716 *ctx)
 {
@@ -55,7 +65,7 @@ static int sharp_ft8716_on(struct sharp_ft8716 *ctx)
 		return ret;
 	}
 
-	mipi_dsi_dcs_write_seq(dsi, MIPI_DCS_WRITE_CONTROL_DISPLAY, 0x24);
+	dsi_dcs_write_seq(dsi, MIPI_DCS_WRITE_CONTROL_DISPLAY, 0x24);
 	usleep_range(1000, 2000);
 
 	ret = mipi_dsi_dcs_set_display_on(dsi);
@@ -100,12 +110,19 @@ static int sharp_ft8716_prepare(struct drm_panel *panel)
 	if (ctx->prepared)
 		return 0;
 
+	ret = regulator_bulk_enable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
+	if (ret < 0) {
+		dev_err(dev, "Failed to enable regulators: %d\n", ret);
+		return ret;
+	}
+
 	sharp_ft8716_reset(ctx);
 
 	ret = sharp_ft8716_on(ctx);
 	if (ret < 0) {
 		dev_err(dev, "Failed to initialize panel: %d\n", ret);
 		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+		regulator_bulk_disable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
 		return ret;
 	}
 
@@ -127,6 +144,7 @@ static int sharp_ft8716_unprepare(struct drm_panel *panel)
 		dev_err(dev, "Failed to un-initialize panel: %d\n", ret);
 
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+	regulator_bulk_disable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
 
 	ctx->prepared = false;
 	return 0;
@@ -180,6 +198,13 @@ static int sharp_ft8716_probe(struct mipi_dsi_device *dsi)
 	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
+
+	ctx->supplies[0].supply = "vsn";
+	ctx->supplies[1].supply = "vsp";
+	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(ctx->supplies),
+				      ctx->supplies);
+	if (ret < 0)
+		return dev_err_probe(dev, ret, "Failed to get regulators\n");
 
 	ctx->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
 	if (IS_ERR(ctx->reset_gpio))
@@ -244,4 +269,4 @@ module_mipi_dsi_driver(sharp_ft8716_driver);
 
 MODULE_AUTHOR("linux-mdss-dsi-panel-driver-generator <fix@me>"); // FIXME
 MODULE_DESCRIPTION("DRM driver for sharp 1080p video mode dsi panel");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
