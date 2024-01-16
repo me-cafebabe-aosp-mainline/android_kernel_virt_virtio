@@ -1,0 +1,221 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/dts-v1/;
+
+#include "msm8953-xiaomi-common.dtsi"
+
+/delete-node/ &adsp_fw_mem;
+/delete-node/ &cont_splash_mem;
+/delete-node/ &qseecom_mem;
+/delete-node/ &wcnss_fw_mem;
+
+/ {
+	model = "Xiaomi Mi Max 2 (oxygen)";
+	compatible = "xiaomi,oxygen", "qcom,msm8953";
+	qcom,board-id = <26 0>;
+	qcom,pmic-id = <0x010016 0x010011 0x0 0x0>;
+
+	aliases {
+		mmc0 = &sdhc_1;
+		mmc1 = &sdhc_2;
+	};
+
+	chosen {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		framebuffer@90001000 {
+			compatible = "simple-framebuffer";
+			reg = <0 0x90001000 0 (1920 * 1080 * 3)>;
+
+			width = <1080>;
+			height = <1920>;
+			stride = <(1080 * 3)>;
+			format = "r8g8b8";
+
+			power-domains = <&gcc MDSS_GDSC>;
+
+			clocks = <&gcc GCC_MDSS_AHB_CLK>,
+				 <&gcc GCC_MDSS_AXI_CLK>,
+				 <&gcc GCC_MDSS_VSYNC_CLK>,
+				 <&gcc GCC_MDSS_MDP_CLK>,
+				 <&gcc GCC_MDSS_BYTE0_CLK>,
+				 <&gcc GCC_MDSS_PCLK0_CLK>,
+				 <&gcc GCC_MDSS_ESC0_CLK>;
+		};
+	};
+
+	gpio-keys {
+		pinctrl-names = "default";
+		pinctrl-0 = <&gpio_hall_sensor_default>;
+
+		event-hall-sensor {
+			label = "Hall Effect Sensor";
+			gpios = <&tlmm 140 GPIO_ACTIVE_LOW>;
+			linux,input-type = <EV_SW>;
+			linux,code = <SW_LID>;
+			linux,can-disable;
+		};
+	};
+
+	reserved-memory {
+		adsp_fw_mem: adsp@8d600000 {
+			reg = <0x0 0x8d600000 0x0 0x1200000>;
+			no-map;
+		};
+
+		qseecom_mem: qseecom@84a00000 {
+			reg = <0x0 0x84a00000 0x0 0x1e00000>;
+			no-map;
+		};
+
+		wcnss_fw_mem: wcnss@8e800000 {
+			reg = <0x0 0x8e800000 0x0 0x700000>;
+			no-map;
+		};
+
+		cont_splash_mem: cont-splash@90001000 {
+			reg = <0x0 0x90001000 0x0 (1080 * 1920 * 3)>;
+			no-map;
+		};
+
+		ramoops@b0000000 {
+			compatible = "ramoops";
+			reg = <0 0xb0000000 0 0x800000>;
+			console-size = <0x200000>;
+			pmsg-size = <0x200000>;
+			record-size = <0x200000>;
+		};
+	};
+};
+
+&aw2013_led {
+	status = "okay";
+
+	/*
+	 * Button backlight (only available for hardware version == 0x180)
+	 */
+	led@1 {
+		reg = <1>;
+		color = <LED_COLOR_ID_WHITE>;
+		function = LED_FUNCTION_KBD_BACKLIGHT;
+		led-max-microamp = <5000>;
+
+		status = "disabled";
+	};
+};
+
+&battery {
+	charge-full-design-microamp-hours = <5300000>;
+	/*
+	 * Stock DTS specified max charging current to 3400mA,
+	 * and stock charger driver supports thermal mitigation.
+	 *
+	 * However, The mainline driver does not support it,
+	 * Hence we set a lower charging current to be safe.
+	 * (Corresponds to qcom,thermal-fcc-screen-on[0] in stock DTS)
+	 */
+	constant-charge-current-max-microamp = <1800000>;
+	voltage-min-design-microvolt = <3400000>;
+	voltage-max-design-microvolt = <4400000>;
+};
+
+&ft5406_ts {
+	status = "okay";
+
+	iovcc-supply = <&tp1v8_vreg>;
+	vcc-supply = <&tp2v8_vreg>;
+
+	touchscreen-size-x = <1080>;
+	touchscreen-size-y = <1920>;
+};
+
+&panel {
+	compatible = "xiaomi,oxygen-panel";
+	reset-gpios = <&tlmm 35 GPIO_ACTIVE_LOW>;
+};
+
+&pmi8950_mpps {
+	/* TODO: Button backlight */
+};
+
+&rpm_requests {
+	regulators {
+		l6 {
+			regulator-always-on;
+		};
+
+		l17 {
+			/* Matches with unmodified downstream msm8953-regulator.dtsi */
+			regulator-min-microvolt = <2850000>;
+		};
+
+		l22 {
+			regulator-min-microvolt = <2850000>;
+			regulator-max-microvolt = <2850000>;
+		};
+	};
+};
+
+&sdhc_2 {
+	cd-gpios = <&tlmm 133 GPIO_ACTIVE_LOW>;
+};
+
+&soc {
+	tp1v8_vreg: tp1v8_vreg {
+		compatible = "regulator-fixed";
+		regulator-name = "tp1v8_vreg";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		gpio = <&tlmm 61 0>;
+		startup-delay-us = <5000>;
+		enable-active-high;
+	};
+
+	tp2v8_vreg: tp2v8_vreg {
+		compatible = "regulator-fixed";
+		regulator-name = "tp2v8_vreg";
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+		gpio = <&tlmm  128 0>;
+		startup-delay-us = <5000>;
+		enable-active-high;
+	};
+};
+
+&sound_card {
+	model = "xiaomi-oxygen";
+	status = "disabled";
+};
+
+&tlmm {
+	gpio-reserved-ranges = <0 4>, <135 4>;
+
+	gpio_hall_sensor_default: gpio-hall-sensor-state {
+		pins = "gpio140";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	pmx-mdss-default-state {
+		pins = "gpio61", "gpio59";
+	};
+
+	pmx-mdss-sleep-state {
+		pins = "gpio61", "gpio59";
+	};
+};
+
+&wcd_codec {
+	/delete-property/ qcom,gnd-jack-type-normally-open;
+	/delete-property/ qcom,hphl-jack-type-normally-open;
+	/*
+	 * FIXME:
+	 * For hw_version >= 0x160 && hw_version <= 0x180 hardware,
+	 * qcom,mbhc-vthreshold-high[0] = 200
+	 * qcom,mbhc-vthreshold-high[1] = 380
+	 */
+	qcom,mbhc-vthreshold-high = <75 260 750 750 750>;
+	qcom,mbhc-vthreshold-low = <75 150 225 450 500>;
+};
