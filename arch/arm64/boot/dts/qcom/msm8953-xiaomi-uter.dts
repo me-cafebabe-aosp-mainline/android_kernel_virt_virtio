@@ -131,7 +131,7 @@
 };
 
 &panel {
-	compatible = "xiaomi,uter-panel";
+	compatible = "xiaomi,uter-td4310_tianma";
 	rotation = <180>;
 };
 

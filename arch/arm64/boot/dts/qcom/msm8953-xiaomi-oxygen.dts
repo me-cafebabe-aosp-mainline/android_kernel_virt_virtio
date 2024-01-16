@@ -131,7 +131,7 @@
 };
 
 &panel {
-	compatible = "xiaomi,oxygen-panel";
+	compatible = "xiaomi,oxygen-r63350";
 	reset-gpios = <&tlmm 35 GPIO_ACTIVE_LOW>;
 };
 

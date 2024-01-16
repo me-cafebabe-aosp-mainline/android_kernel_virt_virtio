@@ -225,7 +225,7 @@
 };
 
 &panel {
-	compatible = "xiaomi,vince-panel";
+	compatible = "xiaomi,td4310-fhdplus-e7";
 };
 
 &pm8953_l23 {
@@ -238,7 +238,7 @@
 };
 
 &rmi4_ts {
-	status = "disabled";
+	status = "okay";
 };
 
 &sound_card {

@@ -193,7 +193,7 @@
 };
 
 &panel {
-	compatible = "xiaomi,ysl-panel";
+	compatible = "xiaomi,ysl-ili9881c";
 };
 
 &pm8953_l10 {
