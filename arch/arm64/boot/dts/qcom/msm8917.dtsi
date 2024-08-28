@@ -709,6 +709,8 @@
 				interrupt-parent = <&mdss>;
 				interrupts = <0>;
 
+				power-domains = <&gcc MDSS_GDSC>;
+
 				clocks = <&gcc GCC_MDSS_AHB_CLK>,
 					 <&gcc GCC_MDSS_AXI_CLK>,
 					 <&gcc GCC_MDSS_MDP_CLK>,
