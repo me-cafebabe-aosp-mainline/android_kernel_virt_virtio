@@ -1053,7 +1053,7 @@ static void ipa_ndev_setup(struct net_device *ndev)
 
 DEF_ACTION(qcom_unregister_ssr_notifier, struct ipa *ipa,
 	   ipa->ssr_cookie, &ipa->ssr_nb);
-DEF_ACTION(ipa_qmi_teardown, struct ipa *ipa, ipa->qmi);
+DEF_ACTION(ipa2_qmi_teardown, struct ipa *ipa, ipa->qmi);
 
 static void ipa_remove_netdev(void *data)
 {
@@ -1223,14 +1223,14 @@ static int ipa_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	ipa->qmi = ipa_qmi_setup(dev, ipa->layout);
+	ipa->qmi = ipa2_qmi_setup(dev, ipa->layout);
 	if (IS_ERR(ipa->qmi))
 		return PTR_ERR(ipa->qmi);
 
 	if (ipa->smem_uc_loaded[0] == 0x10ADEDFF)
 		ipa_qmi_uc_loaded(ipa->qmi);
 
-	return devm_add_action_or_reset(dev, action_ipa_qmi_teardown, ipa);
+	return devm_add_action_or_reset(dev, action_ipa2_qmi_teardown, ipa);
 }
 
 static void ipa_remove(struct platform_device *pdev)

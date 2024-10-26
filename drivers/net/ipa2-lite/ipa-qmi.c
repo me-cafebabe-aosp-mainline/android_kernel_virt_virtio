@@ -1244,7 +1244,7 @@ static const struct qmi_ops ipa_client_ops = {
 };
 
 /* Set up for QMI message exchange */
-struct ipa_qmi *ipa_qmi_setup(struct device *dev, const struct ipa_partition *layout)
+struct ipa_qmi *ipa2_qmi_setup(struct device *dev, const struct ipa_partition *layout)
 {
 	struct ipa_qmi *ipa_qmi;
 	int ret;
@@ -1322,7 +1322,7 @@ bool ipa_qmi_is_modem_ready(struct ipa_qmi *ipa_qmi)
 }
 
 /* Tear down IPA QMI handles */
-void ipa_qmi_teardown(struct ipa_qmi *ipa_qmi)
+void ipa2_qmi_teardown(struct ipa_qmi *ipa_qmi)
 {
 	cancel_work_sync(&ipa_qmi->init_driver_work);
 

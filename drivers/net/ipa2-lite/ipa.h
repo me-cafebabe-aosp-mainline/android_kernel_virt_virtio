@@ -32,8 +32,8 @@ struct ipa_partition {
 struct device;
 struct ipa_qmi;
 
-struct ipa_qmi *ipa_qmi_setup(struct device *dev, const struct ipa_partition *layout);
+struct ipa_qmi *ipa2_qmi_setup(struct device *dev, const struct ipa_partition *layout);
 bool ipa_qmi_is_modem_ready(struct ipa_qmi *ipa_qmi);
 void ipa_qmi_uc_loaded(struct ipa_qmi *ipa_qmi);
-void ipa_qmi_teardown(struct ipa_qmi *ipa_qmi);
+void ipa2_qmi_teardown(struct ipa_qmi *ipa_qmi);
 void ipa_modem_set_present(struct device *dev, bool present);
