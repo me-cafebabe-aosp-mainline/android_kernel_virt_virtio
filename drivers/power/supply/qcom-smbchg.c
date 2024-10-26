@@ -1355,16 +1355,13 @@ static enum power_supply_property smbchg_props[] = {
 	POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT
 };
 
-static enum power_supply_usb_type smbchg_usb_types[] = {
-	POWER_SUPPLY_USB_TYPE_UNKNOWN, POWER_SUPPLY_USB_TYPE_SDP,
-	POWER_SUPPLY_USB_TYPE_DCP, POWER_SUPPLY_USB_TYPE_CDP
-};
-
 static const struct power_supply_desc smbchg_usb_psy_desc = {
 	.name = "qcom-smbchg-usb",
 	.type = POWER_SUPPLY_TYPE_USB,
-	.usb_types = smbchg_usb_types,
-	.num_usb_types = ARRAY_SIZE(smbchg_usb_types),
+	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_UNKNOWN) |
+				 BIT(POWER_SUPPLY_USB_TYPE_SDP) |
+				 BIT(POWER_SUPPLY_USB_TYPE_DCP) |
+				 BIT(POWER_SUPPLY_USB_TYPE_CDP),
 	.properties = smbchg_props,
 	.num_properties = ARRAY_SIZE(smbchg_props),
 	.get_property = smbchg_get_property,
