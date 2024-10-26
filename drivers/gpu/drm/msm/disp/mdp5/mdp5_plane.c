@@ -194,7 +194,9 @@ static void mdp5_plane_calc_bw(struct drm_plane_state *state, struct drm_crtc_st
 	prefill_div = hw_latency_lines;
 	if (vbp + vpw > hw_latency_lines)
 		prefill_div = vbp + vpw;
-#if 0
+#if 1
+	(void)vfp;
+#else
 	else if (vbp + vpw + vfp < hw_latency_lines)
 		prefill_div = vbp + vpw + vfp;
 #endif

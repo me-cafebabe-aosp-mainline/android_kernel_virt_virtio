@@ -257,6 +257,7 @@ static int ipa_setup_ep(struct ipa *ipa, enum ipa_ep_id id)
 		iowrite32(0x00000001, ipa->mmio + REG_IPA_EP_STATUS(id));
 		break;
 	case EP_TX:
+		fallthrough;
 	case EP_TEST_TX:
 		iowrite32(ipa->test_mode ? 0xc4 : 0x44, ipa->mmio + REG_IPA_EP_HDR(id));
 		iowrite32(0x00000001, ipa->mmio + REG_IPA_EP_HDR_EXT(id));
@@ -265,10 +266,12 @@ static int ipa_setup_ep(struct ipa *ipa, enum ipa_ep_id id)
 		iowrite32(0x00000020, ipa->mmio + REG_IPA_EP_MODE(id));
 		break;
 	case EP_RX:
+		fallthrough;
 	case EP_TEST_RX:
 		iowrite32(0x002800c4, ipa->mmio + REG_IPA_EP_HDR(id));
 		iowrite32(0x0000000b, ipa->mmio + REG_IPA_EP_HDR_EXT(id));
 		iowrite32(0xff000000, ipa->mmio + REG_IPA_EP_HDR_METADATA_MASK(id));
+		fallthrough;
 	default:
 		break;
 	}
@@ -533,6 +536,7 @@ static int ipa_init_sram_part(struct ipa *ipa, enum ipa_part_id mem_id)
 
 		while (payload <= end)
 			*(payload++) = val | 1;
+		fallthrough;
 	default:
 		break;
 	}
@@ -861,7 +865,7 @@ static int ipa_enqueue_skb(struct sk_buff *skb, struct net_device *ndev, struct 
 {
 	struct device *dev = ep->ipa->dev;
 	struct fifo_desc desc;
-	int ret, reserved;
+	int ret = 0, reserved;
 	u32 len;
 
 	len = ep->is_rx ? IPA_RX_LEN : skb->len;

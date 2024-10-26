@@ -21,6 +21,10 @@
 #define HOST_ORDER ELFDATA2MSB
 #endif
 
+#ifndef R_AARCH64_PREL64
+#define R_AARCH64_PREL64 260
+#endif
+
 static Elf64_Ehdr *ehdr;
 static Elf64_Shdr *shdr;
 static const char *strtab;
