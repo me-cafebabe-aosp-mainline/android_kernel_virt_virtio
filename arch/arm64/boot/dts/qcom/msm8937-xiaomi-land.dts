@@ -143,7 +143,7 @@
 	vdda-supply = <&pm8937_l2>;
 	vddio-supply = <&pm8937_l6>;
 	panel@0 {
-		compatible = "xiaomi,land-panel";
+		compatible = "xiaomi,land-hx8394f-boe";
 		reg = <0>;
 
 		reset-gpios = <&tlmm 60 GPIO_ACTIVE_LOW>;
