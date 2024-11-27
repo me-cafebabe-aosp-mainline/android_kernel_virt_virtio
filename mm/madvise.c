@@ -103,6 +103,7 @@ struct anon_vma_name *anon_vma_name(struct vm_area_struct *vma)
 
 	return vma->anon_name;
 }
+EXPORT_SYMBOL_GPL(anon_vma_name);
 
 /* mmap_lock should be write-locked */
 static int replace_anon_vma_name(struct vm_area_struct *vma,
@@ -450,7 +451,8 @@ regular_page:
 
 		if (!pte_present(ptent)) {
 			entry = pte_to_swp_entry(ptent);
-			trace_android_vh_madvise_pageout_swap_entry(entry,
+			if (!is_migration_entry(entry))
+				trace_android_vh_madvise_pageout_swap_entry(entry,
 					swp_swapcount(entry));
 			continue;
 		}
