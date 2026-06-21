@@ -3812,8 +3812,6 @@ int amdgpu_device_init(struct amdgpu_device *adev,
 
 	INIT_WORK(&adev->xgmi_reset_work, amdgpu_device_xgmi_reset_func);
 
-	amdgpu_coredump_init(adev);
-
 	adev->gfx.gfx_off_req_count = 1;
 	adev->gfx.gfx_off_residency = 0;
 	adev->gfx.gfx_off_entrycount = 0;

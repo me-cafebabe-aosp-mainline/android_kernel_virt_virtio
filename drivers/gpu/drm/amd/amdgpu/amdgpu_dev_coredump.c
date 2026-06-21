@@ -32,12 +32,7 @@ void amdgpu_coredump(struct amdgpu_device *adev, bool skip_vram_check,
 		     bool vram_lost, struct amdgpu_job *job)
 {
 }
-void amdgpu_coredump_init(struct amdgpu_device *adev)
-{
-}
 #else
-
-#define AMDGPU_CORE_DUMP_SIZE_MAX (256 * 1024 * 1024)
 
 const char *hw_ip_names[MAX_HWIP] = {
 	[GC_HWIP]		= "GC",
@@ -201,9 +196,11 @@ static void amdgpu_devcoredump_fw_info(struct amdgpu_device *adev,
 }
 
 static ssize_t
-amdgpu_devcoredump_format(char *buffer, size_t count, struct amdgpu_coredump_info *coredump)
+amdgpu_devcoredump_read(char *buffer, loff_t offset, size_t count,
+			void *data, size_t datalen)
 {
 	struct drm_printer p;
+	struct amdgpu_coredump_info *coredump = data;
 	struct drm_print_iterator iter;
 	struct amdgpu_vm_fault_info *fault_info;
 	struct amdgpu_ip_block *ip_block;
@@ -211,6 +208,7 @@ amdgpu_devcoredump_format(char *buffer, size_t count, struct amdgpu_coredump_inf
 
 	iter.data = buffer;
 	iter.offset = 0;
+	iter.start = offset;
 	iter.remain = count;
 
 	p = drm_coredump_printer(&iter);
@@ -324,63 +322,9 @@ amdgpu_devcoredump_format(char *buffer, size_t count, struct amdgpu_coredump_inf
 	return count - iter.remain;
 }
 
-static ssize_t
-amdgpu_devcoredump_read(char *buffer, loff_t offset, size_t count,
-			void *data, size_t datalen)
-{
-	struct amdgpu_coredump_info *coredump = data;
-	ssize_t byte_copied;
-
-	if (!coredump)
-		return -ENODEV;
-
-	if (!coredump->formatted)
-		return -ENODEV;
-
-	if (offset >= coredump->formatted_size)
-		return 0;
-
-	byte_copied = count < coredump->formatted_size - offset ? count :
-		coredump->formatted_size - offset;
-	memcpy(buffer, coredump->formatted + offset, byte_copied);
-
-	return byte_copied;
-}
-
 static void amdgpu_devcoredump_free(void *data)
 {
-	struct amdgpu_coredump_info *coredump = data;
-
-	kvfree(coredump->formatted);
-	kvfree(data);
-}
-
-static void amdgpu_devcoredump_deferred_work(struct work_struct *work)
-{
-	struct amdgpu_device *adev = container_of(work, typeof(*adev), coredump_work);
-	struct amdgpu_coredump_info *coredump = adev->coredump;
-
-	/* Do a one-time preparation of the coredump output because
-	 * repeatingly calling drm_coredump_printer is very slow.
-	 */
-	coredump->formatted_size = amdgpu_devcoredump_format(
-		NULL, AMDGPU_CORE_DUMP_SIZE_MAX, coredump);
-	coredump->formatted = kvzalloc(coredump->formatted_size, GFP_KERNEL);
-	if (!coredump->formatted) {
-		amdgpu_devcoredump_free(coredump);
-		goto end;
-	}
-
-	amdgpu_devcoredump_format(coredump->formatted, coredump->formatted_size, coredump);
-
-	/* If there's an existing coredump for this device, the free function will be
-	 * called immediately so coredump might be invalid after the call to dev_coredumpm.
-	 */
-	dev_coredumpm(coredump->adev->dev, THIS_MODULE, coredump, 0, GFP_NOWAIT,
-		      amdgpu_devcoredump_read, amdgpu_devcoredump_free);
-
-end:
-	adev->coredump = NULL;
+	kfree(data);
 }
 
 void amdgpu_coredump(struct amdgpu_device *adev, bool skip_vram_check,
@@ -389,10 +333,6 @@ void amdgpu_coredump(struct amdgpu_device *adev, bool skip_vram_check,
 	struct drm_device *dev = adev_to_drm(adev);
 	struct amdgpu_coredump_info *coredump;
 	struct drm_sched_job *s_job;
-
-	/* No need to generate a new coredump if there's one in progress already. */
-	if (work_pending(&adev->coredump_work))
-		return;
 
 	coredump = kzalloc_obj(*coredump, GFP_NOWAIT);
 	if (!coredump)
@@ -420,20 +360,11 @@ void amdgpu_coredump(struct amdgpu_device *adev, bool skip_vram_check,
 
 	ktime_get_ts64(&coredump->reset_time);
 
-	/* Update the current coredump pointer (no lock needed, this function can only be called
-	 * from a single thread)
-	 */
-	adev->coredump = coredump;
-	/* Kick off coredump formatting to a worker thread. */
-	queue_work(system_unbound_wq, &adev->coredump_work);
+	dev_coredumpm(dev->dev, THIS_MODULE, coredump, 0, GFP_NOWAIT,
+		      amdgpu_devcoredump_read, amdgpu_devcoredump_free);
 
 	drm_info(dev, "AMDGPU device coredump file has been created\n");
 	drm_info(dev, "Check your /sys/class/drm/card%d/device/devcoredump/data\n",
 		 dev->primary->index);
-}
-
-void amdgpu_coredump_init(struct amdgpu_device *adev)
-{
-	INIT_WORK(&adev->coredump_work, amdgpu_devcoredump_deferred_work);
 }
 #endif
