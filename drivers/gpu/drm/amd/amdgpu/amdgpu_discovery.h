@@ -30,7 +30,6 @@
 #define DISCOVERY_TMR_OFFSET    (64 << 10)
 
 struct ip_discovery_top;
-struct drm_printer;
 
 struct amdgpu_discovery_info {
 	struct debugfs_blob_wrapper debugfs_blob;
@@ -50,7 +49,5 @@ int amdgpu_discovery_get_nps_info(struct amdgpu_device *adev,
 				  int *range_cnt, bool refresh);
 int amdgpu_discovery_get_gc_major_minor_version(struct amdgpu_device *adev,
 						uint16_t *major, uint16_t *minor);
-
-void amdgpu_discovery_dump(struct amdgpu_device *adev, struct drm_printer *p);
 
 #endif /* __AMDGPU_DISCOVERY__ */
