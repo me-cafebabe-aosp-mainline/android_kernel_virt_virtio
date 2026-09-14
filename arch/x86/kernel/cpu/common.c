@@ -293,7 +293,7 @@ enum syscall_hardening_switch {
 	SYSCALL_HARDENING_OFF,
 };
 
-static enum syscall_hardening_switch syscall_hardening __ro_after_init = SYSCALL_HARDENING_ON;
+static enum syscall_hardening_switch syscall_hardening __ro_after_init = SYSCALL_HARDENING_OFF;
 
 static int __init syscall_hardening_parse_cmdline(char *str)
 {
