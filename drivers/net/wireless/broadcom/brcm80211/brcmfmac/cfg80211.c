@@ -6464,7 +6464,9 @@ done:
 	cfg80211_roamed(ndev, &roam_info, GFP_KERNEL);
 	brcmf_dbg(CONN, "Report roaming result\n");
 
-	if (profile->use_fwsup == BRCMF_PROFILE_FWSUP_1X && profile->is_ft) {
+	if ((profile->use_fwsup == BRCMF_PROFILE_FWSUP_1X && profile->is_ft) ||
+	    profile->use_fwsup == BRCMF_PROFILE_FWSUP_PSK ||
+	    profile->use_fwsup == BRCMF_PROFILE_FWSUP_SAE) {
 		cfg80211_port_authorized(ndev, profile->bssid, NULL, 0, GFP_KERNEL);
 		brcmf_dbg(CONN, "Report port authorized\n");
 	}
@@ -6510,6 +6512,18 @@ brcmf_bss_connect_done(struct brcmf_cfg80211_info *cfg,
 		cfg80211_connect_done(ndev, &conn_params, GFP_KERNEL);
 		brcmf_dbg(CONN, "Report connect result - connection %s\n",
 			  completed ? "succeeded" : "failed");
+
+		/* With firmware supplicant offload the 4-way handshake has
+		 * already completed by the time the link is reported up, so
+		 * user space must be told the port is authorized.
+		 */
+		if (completed &&
+		    (profile->use_fwsup == BRCMF_PROFILE_FWSUP_PSK ||
+		     profile->use_fwsup == BRCMF_PROFILE_FWSUP_SAE)) {
+			cfg80211_port_authorized(ndev, profile->bssid, NULL, 0,
+						 GFP_KERNEL);
+			brcmf_dbg(CONN, "Report port authorized\n");
+		}
 	}
 	brcmf_dbg(TRACE, "Exit\n");
 	return 0;
