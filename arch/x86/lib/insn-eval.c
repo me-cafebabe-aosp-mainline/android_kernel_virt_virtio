@@ -444,9 +444,34 @@ int pt_regs_offset(struct pt_regs *regs, int regno)
 	return -EDOM;
 }
 
+/*
+ * Return the REX.R/X/B register extension bits of @insn, taking them from
+ * a VEX or EVEX prefix (where they are stored inverted) if there is one.
+ * Those bits are only defined in 64-bit mode.
+ */
+static insn_byte_t get_rex_bits(struct insn *insn)
+{
+	insn_byte_t b;
+
+	switch (insn->vex_prefix.nbytes) {
+	case 0:
+		return insn->rex_prefix.value;
+	case 2:
+		if (!insn->x86_64)
+			return 0;
+		return X86_VEX_R(insn->vex_prefix.bytes[1]) ? 0 : 4;
+	default:
+		if (!insn->x86_64)
+			return 0;
+		b = ~insn->vex_prefix.bytes[1];
+		return (b >> 5) & 7;	/* R, X and B */
+	}
+}
+
 static int get_regno(struct insn *insn, enum reg_type type)
 {
 	int nr_registers = ARRAY_SIZE(pt_regoff);
+	insn_byte_t rex = get_rex_bits(insn);
 	int regno = 0;
 
 	/*
@@ -467,20 +492,20 @@ static int get_regno(struct insn *insn, enum reg_type type)
 		if (!X86_MODRM_MOD(insn->modrm.value) && regno == 5)
 			return -EDOM;
 
-		if (X86_REX_B(insn->rex_prefix.value))
+		if (X86_REX_B(rex))
 			regno += 8;
 		break;
 
 	case REG_TYPE_REG:
 		regno = X86_MODRM_REG(insn->modrm.value);
 
-		if (X86_REX_R(insn->rex_prefix.value))
+		if (X86_REX_R(rex))
 			regno += 8;
 		break;
 
 	case REG_TYPE_INDEX:
 		regno = X86_SIB_INDEX(insn->sib.value);
-		if (X86_REX_X(insn->rex_prefix.value))
+		if (X86_REX_X(rex))
 			regno += 8;
 
 		/*
@@ -503,7 +528,7 @@ static int get_regno(struct insn *insn, enum reg_type type)
 		if (!X86_MODRM_MOD(insn->modrm.value) && regno == 5)
 			return -EDOM;
 
-		if (X86_REX_B(insn->rex_prefix.value))
+		if (X86_REX_B(rex))
 			regno += 8;
 		break;
 
