@@ -7364,8 +7364,9 @@ Kernel parameters
 			set for contention-based conversions to occur.
 
 	sse_emu=	[X86-64] Control the user space emulation of SSSE3,
-			SSE4.1, SSE4.2, POPCNT and MOVBE instructions on
-			CPUs lacking them (CONFIG_X86_SSE_EMULATION).
+			SSE4.1, SSE4.2, POPCNT, MOVBE, GFNI and AVX-VNNI
+			instructions on CPUs lacking them
+			(CONFIG_X86_SSE_EMULATION).
 			Format: <bool>
 			Default: 1 (enabled)
 

@@ -1729,7 +1729,7 @@ config X86_UMIP
 	  results are dummy.
 
 config X86_SSE_EMULATION
-	bool "Emulate SSSE3, SSE4.1, SSE4.2, POPCNT and MOVBE for user space"
+	bool "Emulate SSSE3, SSE4.1, SSE4.2, POPCNT, MOVBE, GFNI and AVX-VNNI for user space"
 	depends on X86_64
 	default y
 	help
@@ -1739,7 +1739,11 @@ config X86_SSE_EMULATION
 	  or AMD K8/K10. This allows running binaries built for a newer
 	  baseline, such as the x86_64 Android ABI, on such CPUs.
 
-	  Only the legacy SSE encodings are emulated, not AVX. Every emulated
+	  GFNI and AVX-VNNI are emulated too, including their VEX encodings
+	  on CPUs with AVX. This allows running code built with e.g.
+	  -march=alderlake on Haswell and later CPUs lacking them.
+
+	  Other AVX and AVX-512 instructions are not emulated. Every emulated
 	  instruction costs a trap into the kernel, so code which uses these
 	  instructions in hot loops will run a lot slower. Applications which
 	  check CPUID still see the real CPU features.
