@@ -1,18 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Software emulation of SSSE3, SSE4.1, SSE4.2, POPCNT and MOVBE for user
- * space, for CPUs which lack them.
+ * Software emulation of SSSE3, SSE4.1, SSE4.2, POPCNT, MOVBE, GFNI and
+ * AVX-VNNI for user space, for CPUs which lack them.
  *
  * The x86_64 Android ABI assumes SSSE3, SSE4.1, SSE4.2 and POPCNT. Older
  * CPUs (Core 2 Merom, AMD K8/K10, ...) raise #UD on those instructions. This
  * decodes the faulting instruction with the generic x86 instruction decoder,
  * computes the result and updates the task's registers before resuming it.
  *
- * Only the legacy (non-VEX) encodings are handled. An instruction is only
- * emulated when the boot CPU really lacks the corresponding feature, so a
- * genuine #UD on a capable CPU is never masked.
+ * Binaries built for newer CPUs (e.g. -march=alderlake) additionally use
+ * GFNI and AVX-VNNI instructions, which Haswell to Tiger Lake lack. Their
+ * VEX encodings are emulated as well, on CPUs that implement AVX.
  *
- * The user's SSE/MMX state is never accessed in the hardware registers: the
+ * Other VEX encoded and all EVEX encoded instructions are not handled. An
+ * instruction is only emulated when the boot CPU really lacks the
+ * corresponding feature, so a genuine #UD on a capable CPU is never masked.
+ *
+ * The user's SSE/AVX/MMX state is never accessed in the hardware registers: the
  * emulation runs between kernel_fpu_begin() and kernel_fpu_end(), which
  * saves the user state to the task's fpstate and forces it to be restored
  * from there on the way back to user space. All user memory accesses are
@@ -66,6 +70,17 @@ union v128 {
 	s64 sq[2];
 };
 
+union v256 {
+	u8  b[32];
+	s8  sb[32];
+	u16 w[16];
+	s16 sw[16];
+	u32 d[8];
+	s32 sd[8];
+	u64 q[4];
+	union v128 x[2];
+};
+
 enum mpfx { PFX_NONE, PFX_66, PFX_F3, PFX_F2 };
 
 /* Operand properties of an instruction */
@@ -92,17 +107,20 @@ struct emu {
 	bool has_rex;
 	bool memop;		/* r/m is a memory operand */
 	bool mmx;		/* operands are MMX registers */
+	bool vex;		/* VEX encoded */
 	unsigned int vlen;	/* vector length in bytes */
 	unsigned int reg, rm;	/* register numbers, REX extended */
+	unsigned int vvvv;	/* VEX source register */
 	u8 imm;
 	void __user *addr;
-	union v128 mem;		/* loaded memory operand */
+	union v256 mem;		/* loaded memory operand */
 	union v128 store;	/* data to be stored to memory */
 	bool do_store;
 
 	/* Only valid between kernel_fpu_begin() and kernel_fpu_end() */
 	struct fxregs_state *fx;
 	u64 *xfeatures;
+	u8 *ymmh;		/* upper halves of YMM0-15 */
 	bool sse_dirty, fp_dirty;
 	u32 mxcsr_raised;
 };
@@ -208,6 +226,26 @@ static void fpstate_prepare(struct emu *e)
 		fx->rip = 0;
 		fx->rdp = 0;
 		memset(fx->st_space, 0, sizeof(fx->st_space));
+	}
+
+	/*
+	 * get_xsave_addr() returns NULL for a component in its init state.
+	 * Mark the YMM component in use with all-zero upper halves instead,
+	 * which is the same architectural state.
+	 */
+	if (e->vex && cpu_feature_enabled(X86_FEATURE_AVX)) {
+		struct xregs_state *xs = &fps->regs.xsave;
+
+		if (!(xs->header.xfeatures & XFEATURE_MASK_YMM)) {
+			xs->header.xfeatures |= XFEATURE_MASK_YMM;
+			e->ymmh = get_xsave_addr(xs, XFEATURE_YMM);
+			if (e->ymmh)
+				memset(e->ymmh, 0, 16 * 16);
+			else
+				xs->header.xfeatures &= ~XFEATURE_MASK_YMM;
+		} else {
+			e->ymmh = get_xsave_addr(xs, XFEATURE_YMM);
+		}
 	}
 }
 
@@ -420,6 +458,92 @@ static u64 fp_round(u64 x, unsigned int mbits, unsigned int ebits,
 		exp++;
 	}
 	return sign | (exp << mbits) | (ip & ((1ULL << mbits) - 1));
+}
+
+/* GF(2^8) arithmetic modulo x^8 + x^4 + x^3 + x + 1, as used by GFNI */
+static u8 gf_mul(u8 a, u8 b)
+{
+	u8 r = 0;
+
+	while (b) {
+		if (b & 1)
+			r ^= a;
+		a = (a << 1) ^ ((a & 0x80) ? 0x1b : 0);
+		b >>= 1;
+	}
+	return r;
+}
+
+static u8 gf_inv(u8 x)
+{
+	u8 r = 1;
+	int e;
+
+	/* x^254 is the inverse of x, and 0 for x = 0 */
+	for (e = 254; e; e >>= 1) {
+		if (e & 1)
+			r = gf_mul(r, x);
+		x = gf_mul(x, x);
+	}
+	return r;
+}
+
+static u8 gf_affine(u64 matrix, u8 x, u8 imm)
+{
+	u8 r = 0;
+	unsigned int i;
+
+	for (i = 0; i < 8; i++)
+		r |= (hweight8((matrix >> (8 * (7 - i))) & x) & 1) << i;
+	return r ^ imm;
+}
+
+/*
+ * gf2p8mulb (op 0x38 0xcf), gf2p8affineqb (0x3a 0xce) and gf2p8affineinvqb
+ * (0x3a 0xcf): @a is the data, @s the second multiplicand or the matrices.
+ */
+static void emu_gfni(struct emu *e, union v256 *r, const union v256 *a,
+		     const union v256 *s)
+{
+	unsigned int i;
+
+	for (i = 0; i < e->vlen; i++) {
+		if (e->map == 0x38)
+			r->b[i] = gf_mul(a->b[i], s->b[i]);
+		else if (e->op == 0xce)
+			r->b[i] = gf_affine(s->q[i / 8], a->b[i], e->imm);
+		else
+			r->b[i] = gf_affine(s->q[i / 8], gf_inv(a->b[i]), e->imm);
+	}
+}
+
+static s32 sat_s32(s64 v)
+{
+	return clamp_t(s64, v, S32_MIN, S32_MAX);
+}
+
+/* vpdpbusd(s) and vpdpwssd(s), VEX 66 0F38 50-53: @r += @a * @s */
+static void emu_vnni(struct emu *e, union v256 *r, const union v256 *a,
+		     const union v256 *s)
+{
+	bool sat = e->op & 1;
+	unsigned int i, k;
+
+	for (i = 0; i < e->vlen / 4; i++) {
+		s64 sum = 0;
+
+		if (e->op < 0x52) {		/* unsigned a, signed s bytes */
+			for (k = 0; k < 4; k++)
+				sum += (s32)a->b[4 * i + k] * s->sb[4 * i + k];
+		} else {			/* signed words */
+			for (k = 0; k < 2; k++)
+				sum += (s32)a->sw[2 * i + k] * s->sw[2 * i + k];
+		}
+		if (sat)
+			r->sd[i] = sat_s32(r->sd[i] + sum);
+		else
+			r->d[i] += (u32)sum;
+	}
 }
 
 /* SSSE3, 0F 38 00-0B and 1C-1E, both MMX and XMM forms */
@@ -974,6 +1098,9 @@ static bool classify(struct emu *e)
 		case 0x37:
 			d->feature = X86_FEATURE_XMM4_2;
 			return true;
+		case 0xcf:		/* gf2p8mulb */
+			d->feature = X86_FEATURE_GFNI;
+			return true;
 		case 0x20 ... 0x25:
 		case 0x30 ... 0x35: {
 			static const u8 sz[] = { 8, 4, 2, 8, 4, 8 };
@@ -1032,6 +1159,10 @@ static bool classify(struct emu *e)
 		case 0x60 ... 0x63:	/* unaligned memory is fine */
 			*d = (struct op_desc){ X86_FEATURE_XMM4_2, 16, 0 };
 			return true;
+		case 0xce:		/* gf2p8affineqb */
+		case 0xcf:		/* gf2p8affineinvqb */
+			d->feature = X86_FEATURE_GFNI;
+			return true;
 		}
 		return false;
 	}
@@ -1084,13 +1215,19 @@ static int emu_vector(struct emu *e)
 
 	vreg_read(e, e->reg, &a);
 	if (e->memop)
-		s = e->mem;
+		s = e->mem.x[0];
 	else if (e->desc.flags & OPF_GPR)
 		s = (union v128){ .q = { *gpr(e, e->rm) } };
 	else
 		vreg_read(e, e->rm, &s);
 
-	if (e->map == 0x38 && e->desc.feature == X86_FEATURE_SSSE3) {
+	if (e->desc.feature == X86_FEATURE_GFNI) {
+		union v256 r2 = {}, a2 = { .x[0] = a }, s2 = { .x[0] = s };
+
+		emu_gfni(e, &r2, &a2, &s2);
+		r = r2.x[0];
+		write = true;
+	} else if (e->map == 0x38 && e->desc.feature == X86_FEATURE_SSSE3) {
 		emu_ssse3(e, &r, &a, &s);
 		write = true;
 	} else if (e->map == 0x3a && e->op == 0x0f) {
@@ -1134,6 +1271,127 @@ static int emu_vector(struct emu *e)
 	return code;
 }
 
+/*
+ * Classify a VEX encoded instruction. Only GFNI and AVX-VNNI, which are
+ * the extensions -march=alderlake code uses beyond what Haswell has.
+ */
+static bool classify_vex(struct emu *e, unsigned int pp, bool w)
+{
+	struct op_desc *d = &e->desc;
+
+	if (pp != 1)				/* all are 66 prefixed */
+		return false;
+
+	*d = (struct op_desc){ 0, e->vlen, 0 };
+	if (e->map == 0x38 && e->op >= 0x50 && e->op <= 0x53 && !w)
+		d->feature = X86_FEATURE_AVX_VNNI;
+	else if (e->map == 0x38 && e->op == 0xcf && !w)
+		d->feature = X86_FEATURE_GFNI;
+	else if (e->map == 0x3a && (e->op == 0xce || e->op == 0xcf) && w)
+		d->feature = X86_FEATURE_GFNI;
+	else
+		return false;
+	return true;
+}
+
+static void ymm_read(struct emu *e, unsigned int n, union v256 *v)
+{
+	v->x[0] = *xmm(e, n);
+	memcpy(&v->x[1], e->ymmh + 16 * n, 16);
+}
+
+/* VEX.128 encoded instructions zero the upper half of the destination */
+static void ymm_write(struct emu *e, unsigned int n, const union v256 *v)
+{
+	*xmm(e, n) = v->x[0];
+	if (e->vlen == 32)
+		memcpy(e->ymmh + 16 * n, &v->x[1], 16);
+	else
+		memset(e->ymmh + 16 * n, 0, 16);
+	e->sse_dirty = true;
+}
+
+/* Run a VEX encoded instruction; returns false if it can not be emulated */
+static bool emu_vex(struct emu *e)
+{
+	union v256 a, s, r;
+
+	kernel_fpu_begin();
+	fpstate_prepare(e);
+	if (!e->ymmh) {
+		kernel_fpu_end();
+		return false;
+	}
+
+	ymm_read(e, e->vvvv, &a);
+	if (e->memop)
+		s = e->mem;
+	else
+		ymm_read(e, e->rm, &s);
+
+	if (e->desc.feature == X86_FEATURE_AVX_VNNI) {
+		ymm_read(e, e->reg, &r);
+		emu_vnni(e, &r, &a, &s);
+	} else {
+		emu_gfni(e, &r, &a, &s);
+	}
+	ymm_write(e, e->reg, &r);
+
+	fpstate_commit(e);
+	kernel_fpu_end();
+	return true;
+}
+
+/* Decode the VEX prefix; returns false if it is not one we emulate */
+static bool decode_vex(struct emu *e)
+{
+	struct insn *insn = e->insn;
+	insn_byte_t b1 = insn->vex_prefix.bytes[1];
+	insn_byte_t last = insn->vex_prefix.bytes[insn->vex_prefix.nbytes - 1];
+	insn_byte_t p;
+	bool x86_64 = insn->x86_64;
+
+	/* Legacy 66/F2/F3/LOCK and REX prefixes are #UD with VEX */
+	if (insn->rex_prefix.nbytes)
+		return false;
+	for_each_insn_prefix(insn, p)
+		if (p == 0x66 || p == 0xf2 || p == 0xf3 || p == 0xf0)
+			return false;
+
+	if (!cpu_feature_enabled(X86_FEATURE_AVX) || insn->modrm.nbytes != 1 ||
+	    insn->opcode.nbytes != 1)
+		return false;
+
+	switch (insn_vex_m_bits(insn)) {
+	case 2:
+		e->map = 0x38;
+		break;
+	case 3:
+		e->map = 0x3a;
+		break;
+	default:
+		return false;
+	}
+	e->op = insn->opcode.bytes[0];
+	e->vex = true;
+	e->vlen = X86_VEX_L(last) ? 32 : 16;
+	e->vvvv = (~X86_VEX_V(last) & 0xf) & (x86_64 ? 0xf : 0x7);
+	e->reg = X86_MODRM_REG(insn->modrm.value);
+	e->rm = X86_MODRM_RM(insn->modrm.value);
+	if (x86_64 && !X86_VEX_R(b1))
+		e->reg |= 8;
+	if (x86_64 && insn->vex_prefix.nbytes == 3 && !X86_VEX_B(b1))
+		e->rm |= 8;
+	e->memop = X86_MODRM_MOD(insn->modrm.value) != 3;
+
+	if (!classify_vex(e, insn_vex_p_bits(insn), insn_vex_w_bit(insn)))
+		return false;
+	if (e->map == 0x3a && insn->immediate.nbytes != 1)
+		return false;
+	e->imm = insn->immediate.value;
+	return true;
+}
+
 static bool sse_emulate(struct pt_regs *regs)
 {
 	unsigned char buf[MAX_INSN_SIZE];
@@ -1153,9 +1411,20 @@ static bool sse_emulate(struct pt_regs *regs)
 	if (!insn_decode_from_regs(&insn, regs, buf, nr))
 		return false;
 
-	/* Legacy encodings only: no VEX/EVEX/XOP, no REX2 */
-	if (insn.vex_prefix.nbytes || insn.rex_prefix.nbytes > 1)
+	e.insn = &insn;
+	e.regs = regs;
+
+	/* No EVEX/XOP, no REX2 */
+	if (insn_is_evex(&insn) || insn_is_xop(&insn) ||
+	    insn.rex_prefix.nbytes > 1)
 		return false;
+
+	if (insn.vex_prefix.nbytes) {
+		if (!decode_vex(&e) || boot_cpu_has(e.desc.feature))
+			return false;
+		goto operands;
+	}
+
 	if (insn.opcode.bytes[0] != 0x0f || insn.modrm.nbytes != 1)
 		return false;
 
@@ -1177,8 +1446,6 @@ static bool sse_emulate(struct pt_regs *regs)
 	if (pf2 && pf3)
 		return false;
 
-	e.insn = &insn;
-	e.regs = regs;
 	e.pfx = pf2 ? PFX_F2 : pf3 ? PFX_F3 : p66 ? PFX_66 : PFX_NONE;
 	e.has_rex = insn.rex_prefix.nbytes;
 	e.rexw = e.has_rex && X86_REX_W(insn.rex_prefix.value);
@@ -1215,6 +1482,7 @@ static bool sse_emulate(struct pt_regs *regs)
 	if (!e.memop && (e.desc.flags & OPF_MEMONLY))
 		return false;
 
+operands:
 	pr_notice_once("emulating unsupported instructions for %s[%d], expect a large slowdown\n",
 		       current->comm, task_pid_nr(current));
 
@@ -1239,7 +1507,10 @@ static bool sse_emulate(struct pt_regs *regs)
 		}
 	}
 
-	if (e.desc.flags & OPF_NOFPU) {
+	if (e.vex) {
+		if (!emu_vex(&e))
+			return false;
+	} else if (e.desc.flags & OPF_NOFPU) {
 		emu_gpr(&e);
 	} else {
 		code = emu_vector(&e);
@@ -1292,6 +1563,8 @@ static int __init sse_emu_init(void)
 		{ X86_FEATURE_XMM4_2,	"sse4_2" },
 		{ X86_FEATURE_POPCNT,	"popcnt" },
 		{ X86_FEATURE_MOVBE,	"movbe" },
+		{ X86_FEATURE_GFNI,	"gfni" },
+		{ X86_FEATURE_AVX_VNNI,	"avx_vnni" },
 	};
 	char list[64] = "";
 	unsigned int i;
@@ -1301,6 +1574,10 @@ static int __init sse_emu_init(void)
 
 	for (i = 0; i < ARRAY_SIZE(feats); i++) {
 		if (boot_cpu_has(feats[i].feature))
+			continue;
+		/* Only the VEX encoding exists, which needs AVX */
+		if (feats[i].feature == X86_FEATURE_AVX_VNNI &&
+		    !boot_cpu_has(X86_FEATURE_AVX))
 			continue;
 		strlcat(list, " ", sizeof(list));
 		strlcat(list, feats[i].name, sizeof(list));
