@@ -12,6 +12,7 @@ USB support
     ehci
     functionfs
     functionfs-desc
+    gadget-blk
     gadget_configfs
     gadget_hid
     gadget_multi
