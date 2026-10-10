@@ -1,0 +1,31 @@
+What:		/config/usb-gadget/gadget/functions/blk.name
+Date:		Oct 2026
+KernelVersion:	7.3
+Description:
+		The attributes:
+
+		===========	=============================================
+		timeout		seconds to wait for the USB host to complete
+				a request or to attach again after a
+				disconnect before requests fail, 0 to wait
+				forever (default 30)
+		queue_depth	maximum number of outstanding requests
+				(default 32)
+		max_xfer	maximum size of a read or write request in
+				bytes, a multiple of 4096 (default 131072)
+		qlen		number of requests that can be queued for
+				transmission to the host at once (default 8)
+		disk		(read only) name of the block device, empty if
+				the host has not attached a disk
+		===========	=============================================
+
+		queue_depth, max_xfer and qlen can only be changed while
+		the function is not linked to a configuration and no disk
+		exists.
+
+What:		/config/usb-gadget/gadget/functions/blk.name/os_desc/interface.blk
+Date:		Oct 2026
+KernelVersion:	7.3
+Description:
+		Microsoft OS descriptors for the interface, see
+		configfs-usb-gadget. compatible_id defaults to "WINUSB".

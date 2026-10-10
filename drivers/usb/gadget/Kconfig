@@ -223,6 +223,9 @@ config USB_F_PRINTER
 config USB_F_TCM
 	tristate
 
+config USB_F_BLK
+	tristate
+
 # this first set of drivers all depend on bulk-capable hardware.
 
 config USB_CONFIGFS
@@ -363,6 +366,19 @@ config USB_CONFIGFS_MASS_STORAGE
 	  As its storage repository it can use a regular file or a block
 	  device (in much the same way as the "loop" device driver),
 	  specified as a module parameter or sysfs option.
+
+config USB_CONFIGFS_F_BLK
+	bool "Block device backed by the USB host"
+	depends on USB_CONFIGFS
+	depends on BLOCK
+	select USB_F_BLK
+	help
+	  The block device function exposes a block device (/dev/usbblkN)
+	  on the gadget whose storage is served by a program running on
+	  the USB host. This allows running a system from storage on the
+	  host, e.g. for tethered boot during board bring-up.
+
+	  For more information, see Documentation/usb/gadget-blk.rst.
 
 config USB_CONFIGFS_F_LB_SS
 	bool "Loopback and sourcesink function (for testing)"
