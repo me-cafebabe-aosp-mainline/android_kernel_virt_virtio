@@ -1517,6 +1517,7 @@
   kvm_iommu_attach_dev_nested
   kvm_iommu_detach_dev
   kvm_iommu_free_domain
+  kvm_iommu_init_atomic_pool
   kvm_iommu_iotlb_inv_nested_domain
   kvm_iommu_iova_to_phys
   kvm_iommu_map_pages
@@ -2556,6 +2557,7 @@
   timer_delete_sync
   timer_init_key
   topology_update_hw_pressure
+  topup_hyp_memcache
   _totalram_pages
   touch_softlockup_watchdog
   trace_array_get_by_name
@@ -2596,6 +2598,7 @@
   __traceiter_android_vh_do_sync_mmap_readahead
   __traceiter_android_vh_dwc3_core_soft_reset
   __traceiter_android_vh_dwc3_xhci_soft_reset
+  __traceiter_android_vh_enable_thermal_genl_check
   __traceiter_android_vh_ep_create_wakeup_source
   __traceiter_android_vh_filemap_get_folio
   __traceiter_android_vh_free_one_page_flag_check
@@ -2621,6 +2624,7 @@
   __traceiter_android_vh_smaps_pte_entry
   __traceiter_android_vh_swap_writepage
   __traceiter_android_vh_sysrq_crash
+  __traceiter_android_vh_thermal_pm_notify_suspend
   __traceiter_android_vh_timerfd_create
   __traceiter_android_vh_tune_swappiness
   __traceiter_android_vh_ufs_check_int_errors
@@ -2682,6 +2686,7 @@
   __tracepoint_android_vh_do_sync_mmap_readahead
   __tracepoint_android_vh_dwc3_core_soft_reset
   __tracepoint_android_vh_dwc3_xhci_soft_reset
+  __tracepoint_android_vh_enable_thermal_genl_check
   __tracepoint_android_vh_ep_create_wakeup_source
   __tracepoint_android_vh_filemap_get_folio
   __tracepoint_android_vh_free_one_page_flag_check
@@ -2707,6 +2712,7 @@
   __tracepoint_android_vh_smaps_pte_entry
   __tracepoint_android_vh_swap_writepage
   __tracepoint_android_vh_sysrq_crash
+  __tracepoint_android_vh_thermal_pm_notify_suspend
   __tracepoint_android_vh_timerfd_create
   __tracepoint_android_vh_tune_swappiness
   __tracepoint_android_vh_ufs_check_int_errors

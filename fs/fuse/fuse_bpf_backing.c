@@ -856,8 +856,7 @@ int fuse_file_read_iter_backing(struct fuse_bpf_args *fa,
 		return 0;
 
 	if ((iocb->ki_flags & IOCB_DIRECT) &&
-	    (!ff->backing_file->f_mapping->a_ops ||
-	     !ff->backing_file->f_mapping->a_ops->direct_IO))
+	    !(ff->backing_file->f_mode & FMODE_CAN_ODIRECT))
 		return -EINVAL;
 
 	/* TODO This just plain ignores any change to fuse_read_in */
@@ -2084,13 +2083,16 @@ void *fuse_getattr_finalize(struct fuse_bpf_args *fa,
 	struct fuse_attr_out *outarg = fa->out_args[0].value;
 	struct inode *inode = entry->d_inode;
 	u64 attr_version = fuse_get_attr_version(get_fuse_mount(inode)->fc);
-	int err = 0;
 
-	/* TODO: Ensure this doesn't happen if we had an error getting attrs in
-	 * backing.
+	/*
+	 * If backing getattr returned an error (such as a transient -ENOENT or
+	 * -ESTALE), do not pass uninitialized/zeroed attributes to finalize_attr,
+	 * as fuse_invalid_attr() will permanently mark the inode bad (FUSE_I_BAD).
 	 */
-	err = finalize_attr(inode, outarg, attr_version, stat);
-	return ERR_PTR(err);
+	if (fa->error_in)
+		return ERR_PTR(fa->error_in);
+
+	return ERR_PTR(finalize_attr(inode, outarg, attr_version, stat));
 }
 
 static void fattr_to_iattr(struct fuse_conn *fc,
