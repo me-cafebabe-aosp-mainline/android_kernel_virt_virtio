@@ -11,11 +11,13 @@ use crate::{
     error::{from_err_ptr, to_result},
     fs::File,
     prelude::*,
+    scatterlist::SGTable,
     sync::SpinLock,
     types::{ARef, AlwaysRefCounted, Opaque},
 };
 use core::{
     marker::PhantomData,
+    ops::Deref,
     ops::{Bound, RangeBounds},
     ptr::{self, NonNull},
 };
@@ -238,6 +240,16 @@ impl Drop for DmaBufMapping {
     }
 }
 
+impl Deref for DmaBufMapping {
+    type Target = SGTable;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: `self.sgt` is valid for the lifetime of `Self`.
+        unsafe { SGTable::from_raw(self.sgt.as_ptr()) }
+    }
+}
+
 /// A wrapper for an active DMA-BUF virtual mapping.
 ///
 /// # Invariants
@@ -403,6 +415,19 @@ impl<'a, const READ: bool> CpuAccess<'a, READ, true> {
         // SAFETY: The bounds check ensures we don't write out of bounds. The guard has WRITE
         // enabled.
         unsafe { bindings::iosys_map_memcpy_to(self.map, offset, src.as_ptr().cast(), src.len()) };
+    }
+
+    /// Sets a range of `len` bytes starting at `offset` into the buffer to `value`.
+    #[inline]
+    #[track_caller]
+    pub fn memset(&mut self, offset: usize, value: u8, len: usize) {
+        let (end, end_overflow) = offset.overflowing_add(len);
+        if end_overflow || end > self.size {
+            panic!("memset of {len} bytes at {offset} in dma-buf out of bounds",);
+        }
+        // SAFETY: The bounds check ensures we don't write out of bounds. The guard has WRITE
+        // enabled.
+        unsafe { bindings::iosys_map_memset(self.map, offset, value as c_int, len) };
     }
 }
 
