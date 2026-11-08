@@ -346,8 +346,11 @@ struct pkvm_hyp_vcpu *pkvm_load_hyp_vcpu(pkvm_handle_t handle,
 	if (!hyp_vcpu)
 		goto unlock;
 
-	/* Ensure vcpu isn't loaded on more than one cpu simultaneously. */
-	if (unlikely(cmpxchg_relaxed(&hyp_vcpu->loaded_hyp_vcpu, NULL,
+	/*
+	 * Ensure vcpu isn't loaded on more than one cpu simultaneously.
+	 * Pairs with smp_store_release() in pkvm_put_hyp_vcpu().
+	 */
+	if (unlikely(cmpxchg_acquire(&hyp_vcpu->loaded_hyp_vcpu, NULL,
 				     this_cpu_ptr(&loaded_hyp_vcpu)))) {
 		hyp_vcpu = NULL;
 		goto unlock;
@@ -1046,7 +1049,7 @@ err_unpin_kvm:
 	return ret;
 }
 
-struct ffa_mem_transfer *__pkvm_get_vm_ffa_transfer(u16 handle)
+struct ffa_mem_transfer *__pkvm_get_vm_ffa_transfer(u64 handle)
 {
 	struct pkvm_hyp_vm *vm;
 	struct ffa_mem_transfer *transfer = NULL;

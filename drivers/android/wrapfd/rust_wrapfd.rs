@@ -6,6 +6,7 @@
 
 mod content;
 mod io_context;
+mod poll;
 mod wrap;
 mod wrapfd_device;
 
@@ -44,7 +45,10 @@ impl InPlaceModule for WrapFdModule {
         };
 
         try_pin_init!(Self {
-            miscdev <- kernel::miscdevice::MiscDeviceRegistration::register(options),
+            miscdev <- kernel::miscdevice::MiscDeviceRegistration::register(
+                options,
+                Ok(WrapFdDevice),
+            ),
         })
     }
 }
