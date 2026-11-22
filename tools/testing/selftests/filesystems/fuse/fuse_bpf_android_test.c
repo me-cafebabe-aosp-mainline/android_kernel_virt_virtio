@@ -626,8 +626,7 @@ static void *fuse_mini_daemon(void *arg)
 				   &out, sizeof(out), NULL, 0);
 		} else if (op == FUSE_GETATTR &&
 			   (ih->nodeid == FUSE_ROOT_ID ||
-			    ih->nodeid == FUSE_UNBACKED_NODEID ||
-			    ih->nodeid == FUSE_REDACTED_NODEID)) {
+			    ih->nodeid == FUSE_UNBACKED_NODEID)) {
 			bool root = ih->nodeid == FUSE_ROOT_ID;
 			struct fuse_attr_out ao = {
 				.attr_valid = 3600, .attr.ino = ih->nodeid,
@@ -833,14 +832,37 @@ TEST_F(fuse_bpf, sysfs_and_verifier_gate)
 		FUSE_BPF_MOV64_IMM(BPF_REG_0, FUSE_BPF_BACKING),
 		FUSE_BPF_EXIT_INSN(),
 	};
+	/* b/508702133: the arg value pointers are read-only too. */
+	const struct bpf_insn in_value_write_prog[] = {
+		FUSE_BPF_MOV64_IMM(BPF_REG_2, 0),
+		FUSE_BPF_STX_MEM(BPF_DW, BPF_REG_1, BPF_REG_2,
+				 offsetof(struct fuse_bpf_args,
+					  in_args[0].value)),
+		FUSE_BPF_MOV64_IMM(BPF_REG_0, FUSE_BPF_BACKING),
+		FUSE_BPF_EXIT_INSN(),
+	};
+	const struct bpf_insn out_value_write_prog[] = {
+		FUSE_BPF_MOV64_IMM(BPF_REG_2, 0),
+		FUSE_BPF_STX_MEM(BPF_DW, BPF_REG_1, BPF_REG_2,
+				 offsetof(struct fuse_bpf_args,
+					  out_args[0].value)),
+		FUSE_BPF_MOV64_IMM(BPF_REG_0, FUSE_BPF_BACKING),
+		FUSE_BPF_EXIT_INSN(),
+	};
+	char prog_type[32] = { 0 }, want[32];
 	char feat[32] = { 0 };
 	int bad_fd, prog_fd;
 
 	ASSERT_EQ(0, read_sysfs_str(FUSE_BPF_FEAT_PATH, feat, sizeof(feat)));
 	ASSERT_STREQ("supported\n", feat);
+	/* bpfloader reads the program type from here. */
+	snprintf(want, sizeof(want), "%d\n", BPF_PROG_TYPE_FUSE);
+	ASSERT_EQ(0, read_sysfs_str(FUSE_BPF_TYPE_PATH, prog_type,
+				    sizeof(prog_type)));
+	EXPECT_STREQ(want, prog_type);
 
 	prog_fd = load_fuse_bpf_prog(valid_prog, ARRAY_SIZE(valid_prog));
-	if (prog_fd < 0 && (errno == EPERM || errno == EACCES))
+	if (prog_fd < 0 && errno == EPERM)
 		SKIP(return, "CAP_BPF required");
 	ASSERT_GE(prog_fd, 0);
 	close_fd(&prog_fd);
@@ -851,7 +873,7 @@ TEST_F(fuse_bpf, sysfs_and_verifier_gate)
 	if (bad_fd >= 0)
 		close(bad_fd);
 	ASSERT_LT(bad_fd, 0);
-	EXPECT_TRUE(errno == EACCES || errno == EINVAL);
+	EXPECT_EQ(EACCES, errno);
 
 	errno = 0;
 	bad_fd = load_fuse_bpf_prog_quiet(ro_write_prog,
@@ -859,7 +881,23 @@ TEST_F(fuse_bpf, sysfs_and_verifier_gate)
 	if (bad_fd >= 0)
 		close(bad_fd);
 	ASSERT_LT(bad_fd, 0);
-	EXPECT_TRUE(errno == EACCES || errno == EINVAL);
+	EXPECT_EQ(EACCES, errno);
+
+	errno = 0;
+	bad_fd = load_fuse_bpf_prog_quiet(in_value_write_prog,
+					  ARRAY_SIZE(in_value_write_prog));
+	if (bad_fd >= 0)
+		close(bad_fd);
+	ASSERT_LT(bad_fd, 0);
+	EXPECT_EQ(EACCES, errno);
+
+	errno = 0;
+	bad_fd = load_fuse_bpf_prog_quiet(out_value_write_prog,
+					  ARRAY_SIZE(out_value_write_prog));
+	if (bad_fd >= 0)
+		close(bad_fd);
+	ASSERT_LT(bad_fd, 0);
+	EXPECT_EQ(EACCES, errno);
 }
 
 TEST_F(fuse_bpf, backed_file_rw_mmap)
@@ -1049,6 +1087,8 @@ TEST_F(fuse_bpf, canonical_path_inotify)
 	ASSERT_GE(ifd, 0);
 	wd = inotify_add_watch(ifd, fuse_file, IN_MODIFY | IN_CLOSE_WRITE);
 	ASSERT_GE(wd, 0);
+	/* fuse-bpf gives the lower file's path without asking the daemon. */
+	EXPECT_EQ(0U, __atomic_load_n(&self->canonical_cnt, __ATOMIC_SEQ_CST));
 
 	fd = open(fuse_file, O_WRONLY | O_CLOEXEC);
 	ASSERT_GE(fd, 0);
@@ -1067,6 +1107,8 @@ TEST_F(fuse_bpf, canonical_path_inotify)
 
 		if (ev->wd == wd)
 			mask |= ev->mask;
+		/* No name: the watch is on the file, not on its directory. */
+		EXPECT_EQ(0U, ev->len);
 		off += (ssize_t)sizeof(*ev) + (ssize_t)ev->len;
 	}
 	EXPECT_NE(0U, mask & IN_MODIFY);
@@ -1087,6 +1129,7 @@ TEST_F(fuse_bpf, canonical_path_inotify)
 
 		if (ev->wd == wd)
 			mask |= ev->mask;
+		EXPECT_EQ(0U, ev->len);
 		off += (ssize_t)sizeof(*ev) + (ssize_t)ev->len;
 	}
 	EXPECT_NE(0U, mask & IN_MODIFY);
@@ -1239,10 +1282,13 @@ TEST_F(fuse_bpf, xattr_operations)
 	ASSERT_GE(fd, 0);
 	close_fd(&fd);
 
-	ret = setxattr(fuse_file, xname, "xattr-val", 9, 0);
+	/* Decide the SKIP on the lower file, so a FUSE failure still fails. */
+	ret = setxattr(back_file, xname, "probe", 5, 0);
 	if (ret < 0 && (errno == EOPNOTSUPP || errno == ENOTSUP))
 		SKIP(return, "user xattr unsupported on backing fs");
 	ASSERT_EQ(0, ret);
+	ASSERT_EQ(0, removexattr(back_file, xname));
+	ASSERT_EQ(0, setxattr(fuse_file, xname, "xattr-val", 9, 0));
 
 	ASSERT_EQ((ssize_t)9, getxattr(fuse_file, xname, val, sizeof(val) - 1));
 	EXPECT_STREQ("xattr-val", val);
@@ -1467,6 +1513,7 @@ TEST_F(fuse_bpf, bpf_user_filter_daemon_fallback)
 	ASSERT_EQ((ssize_t)9, write(fd, "secret-9\n", 9));
 	EXPECT_EQ(0U, __atomic_load_n(&self->rw_cnt, __ATOMIC_SEQ_CST));
 	EXPECT_EQ(0U, __atomic_load_n(&self->prefilter_cnt, __ATOMIC_SEQ_CST));
+	/* No daemon GETATTR for this node: stat() uses the lower file. */
 	ASSERT_EQ(0, stat(fuse_file, &st));
 	EXPECT_EQ((off_t)9, st.st_size);
 
@@ -1561,8 +1608,8 @@ TEST_F(fuse_bpf, stacking_depth_lookup_eloop)
 
 TEST_F(fuse_bpf, file_ops_lseek_flock_fallocate)
 {
-	char fuse_file[PATH_MAX];
-	int fd1 = -1, fd2 = -1, prog_fd;
+	char fuse_file[PATH_MAX], back_file[PATH_MAX];
+	int bfd = -1, fd1 = -1, fd2 = -1, prog_fd;
 	long psize;
 
 	prog_fd = load_default_backing_prog();
@@ -1575,6 +1622,8 @@ TEST_F(fuse_bpf, file_ops_lseek_flock_fallocate)
 
 	snprintf(fuse_file, sizeof(fuse_file), "%s/backed/fops.bin",
 		 self->mnt_dir);
+	snprintf(back_file, sizeof(back_file), "%s/fops.bin",
+		 self->backing_dir);
 	fd1 = open(fuse_file, O_CREAT | O_RDWR | O_TRUNC | O_CLOEXEC, 0644);
 	ASSERT_GE(fd1, 0);
 
@@ -1589,13 +1638,25 @@ TEST_F(fuse_bpf, file_ops_lseek_flock_fallocate)
 
 	fd2 = open(fuse_file, O_RDWR | O_CLOEXEC);
 	ASSERT_GE(fd2, 0);
+	bfd = open(back_file, O_RDONLY | O_CLOEXEC);
+	ASSERT_GE(bfd, 0);
 	ASSERT_EQ(0, flock(fd1, LOCK_EX | LOCK_NB));
 	errno = 0;
 	EXPECT_EQ(-1, flock(fd2, LOCK_EX | LOCK_NB));
 	EXPECT_EQ(EWOULDBLOCK, errno);
+	/* The lock is on the lower file, so a lower fd contends with it. */
+	errno = 0;
+	EXPECT_EQ(-1, flock(bfd, LOCK_EX | LOCK_NB));
+	EXPECT_EQ(EWOULDBLOCK, errno);
 	EXPECT_EQ(0, flock(fd1, LOCK_UN));
+	EXPECT_EQ(0, flock(bfd, LOCK_EX | LOCK_NB));
+	errno = 0;
+	EXPECT_EQ(-1, flock(fd2, LOCK_EX | LOCK_NB));
+	EXPECT_EQ(EWOULDBLOCK, errno);
+	EXPECT_EQ(0, flock(bfd, LOCK_UN));
 	EXPECT_EQ(0, flock(fd2, LOCK_EX | LOCK_NB));
 	EXPECT_EQ(0, flock(fd2, LOCK_UN));
+	close_fd(&bfd);
 	close_fd(&fd2);
 	close_fd(&fd1);
 }
@@ -1608,9 +1669,10 @@ TEST_F(fuse_bpf, epoch_invalidation)
 		.unique = 0,
 	};
 	char after_file[PATH_MAX], link_buf[PATH_MAX] = { 0 };
+	char pre_back[PATH_MAX], pre_file[PATH_MAX];
 	char backed_dir[384];
 	uint32_t cnt_before, cnt_cached;
-	int fd = -1, prog_fd;
+	int fd = -1, pre_fd = -1, prog_fd;
 	struct stat st;
 	ssize_t n;
 
@@ -1628,14 +1690,40 @@ TEST_F(fuse_bpf, epoch_invalidation)
 	/* ASSERT, not EXPECT: the SKIP below would hide an EXPECT failure. */
 	ASSERT_EQ(cnt_before, cnt_cached);
 
+	/* Look up an existing lower file before the bump and keep it open. */
+	snprintf(pre_back, sizeof(pre_back), "%s/epoch_pre.txt",
+		 self->backing_dir);
+	snprintf(pre_file, sizeof(pre_file), "%s/epoch_pre.txt", backed_dir);
+	fd = open(pre_back, O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0644);
+	ASSERT_GE(fd, 0);
+	close_fd(&fd);
+	pre_fd = open(pre_file, O_RDONLY | O_CLOEXEC);
+	ASSERT_GE(pre_fd, 0);
+
 	n = write(self->fuse_dev_fd, &oh, sizeof(oh));
-	if (n < 0 && errno == EINVAL)
+	if (n < 0 && errno == EINVAL) {
+		close_fd(&pre_fd);
 		SKIP(return, "FUSE_NOTIFY_INC_EPOCH unsupported");
+	}
 	ASSERT_EQ((ssize_t)sizeof(oh), n);
 
 	ASSERT_EQ(0, stat(backed_dir, &st));
 	EXPECT_GT(__atomic_load_n(&self->lookup_cnt, __ATOMIC_SEQ_CST),
 		  cnt_cached);
+
+	/* The bump invalidates the lookup done before it ... */
+	ASSERT_EQ(0, stat(pre_file, &st));
+	ASSERT_GT(fd_link(pre_fd, link_buf, sizeof(link_buf)), (ssize_t)0);
+	EXPECT_NE(NULL, strstr(link_buf, " (deleted)"));
+	close_fd(&pre_fd);
+
+	/* ... and fuse_lookup_finalize() stamps the new epoch on a new one. */
+	fd = open(pre_file, O_RDONLY | O_CLOEXEC);
+	ASSERT_GE(fd, 0);
+	ASSERT_EQ(0, stat(pre_file, &st));
+	ASSERT_GT(fd_link(fd, link_buf, sizeof(link_buf)), (ssize_t)0);
+	EXPECT_EQ(NULL, strstr(link_buf, " (deleted)"));
+	close_fd(&fd);
 
 	snprintf(after_file, sizeof(after_file), "%s/epoch_after.txt",
 		 backed_dir);

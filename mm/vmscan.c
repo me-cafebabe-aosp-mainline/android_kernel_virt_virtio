@@ -913,7 +913,10 @@ enum folio_references {
 static inline bool is_exec_file_folio(const struct folio *folio,
 		const vm_flags_t vm_flags)
 {
-	return (vm_flags & VM_EXEC) && folio_is_file_lru(folio);
+	bool is_exec = (vm_flags & VM_EXEC) && folio_is_file_lru(folio);
+
+	trace_android_vh_is_exec_file_folio(folio, vm_flags, &is_exec);
+	return is_exec;
 }
 
 #ifdef CONFIG_LRU_GEN
@@ -4081,6 +4084,7 @@ static bool inc_min_seq(struct lruvec *lruvec, int type, int swappiness)
 {
 	int zone;
 	int remaining = MAX_LRU_BATCH;
+	bool stop = false;
 	struct lru_gen_folio *lrugen = &lruvec->lrugen;
 	int hist = lru_hist_from_seq(lrugen->min_seq[type]);
 	int new_gen, old_gen = lru_gen_from_seq(lrugen->min_seq[type]);
@@ -4119,7 +4123,9 @@ static bool inc_min_seq(struct lruvec *lruvec, int type, int swappiness)
 					   lrugen->protected[hist][type][tier] + delta);
 			}
 
-			if (!--remaining)
+			trace_android_vh_mglru_inc_min_seq(lruvec, type, swappiness,
+							   remaining, &stop);
+			if (!--remaining || stop)
 				return false;
 		}
 	}
@@ -4135,6 +4141,7 @@ static bool try_to_inc_min_seq(struct lruvec *lruvec, int swappiness)
 	int gen, type, zone;
 	bool success = false;
 	bool seq_inc_flag = false;
+	bool skip = false;
 	struct lru_gen_folio *lrugen = &lruvec->lrugen;
 	DEFINE_MIN_SEQ(lruvec);
 
@@ -4165,8 +4172,10 @@ next:
 	if (!seq_inc_flag)
 		return success;
 
+	trace_android_vh_mglru_skip_min_seq_balance(lruvec, swappiness, &skip);
+
 	/* see the comment on lru_gen_folio */
-	if (swappiness && swappiness <= MAX_SWAPPINESS) {
+	if (!skip && swappiness && swappiness <= MAX_SWAPPINESS) {
 		unsigned long seq = lrugen->max_seq - MIN_NR_GENS;
 
 		if (min_seq[LRU_GEN_ANON] > seq && min_seq[LRU_GEN_FILE] < seq)
@@ -4670,6 +4679,7 @@ static bool sort_folio(struct lruvec *lruvec, struct folio *folio, struct scan_c
 		       int tier_idx)
 {
 	bool dirty, writeback;
+	bool protect = false;
 	int gen = folio_lru_gen(folio);
 	int type = folio_is_file_lru(folio);
 	int zone = folio_zonenum(folio);
@@ -4728,6 +4738,13 @@ static bool sort_folio(struct lruvec *lruvec, struct folio *folio, struct scan_c
 		return true;
 	}
 
+	trace_android_vh_sort_folio_protect(lruvec, folio, tier_idx, &protect);
+	if (protect) {
+		gen = folio_inc_gen(lruvec, folio, false);
+		list_move(&folio->lru, &lrugen->folios[gen][type][zone]);
+		return true;
+	}
+
 	return false;
 }
 
@@ -4776,12 +4793,19 @@ static int scan_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
 	int isolated = 0;
 	int skipped = 0;
 	int remaining = min(nr_to_scan, MAX_LRU_BATCH);
+	bool force_scan = false;
+	bool skip_scan = false;
+	int swappiness = get_swappiness(lruvec, sc);
 	struct lru_gen_folio *lrugen = &lruvec->lrugen;
 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
 
 	VM_WARN_ON_ONCE(!list_empty(list));
 
-	if (get_nr_gens(lruvec, type) == MIN_NR_GENS)
+	trace_android_vh_mglru_scan_folios(lruvec, sc->priority, type, swappiness,
+					   &force_scan, &skip_scan);
+	if (skip_scan)
+		return 0;
+	if (!force_scan && get_nr_gens(lruvec, type) == MIN_NR_GENS)
 		return 0;
 
 	gen = lru_gen_from_seq(lrugen->min_seq[type]);
@@ -5046,6 +5070,7 @@ static long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *sc, int s
 	DEFINE_MAX_SEQ(lruvec);
 	bool bypass = false;
 	bool young = false;
+	bool force_aging = false;
 
 	/*
 	 * Proactive reclaim initiated by userspace for anonymous memory only.
@@ -5064,6 +5089,11 @@ static long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *sc, int s
 		return -1;
 
 	success = should_run_aging(lruvec, max_seq, swappiness, &nr_to_scan);
+	if (!success) {
+		trace_android_vh_mglru_should_run_aging(lruvec, sc->priority, swappiness,
+							  &force_aging);
+		success |= force_aging;
+	}
 
 	nr_to_scan = apply_proportional_protection(memcg, sc, nr_to_scan);
 
@@ -5115,6 +5145,8 @@ static bool should_abort_scan(struct lruvec *lruvec, struct scan_control *sc)
 	for (i = 0; i <= sc->reclaim_idx; i++) {
 		struct zone *zone = lruvec_pgdat(lruvec)->node_zones + i;
 		unsigned long size = wmark_pages(zone, mark) + MIN_LRU_BATCH;
+
+		trace_android_vh_mm_get_zone_mark_mglru(zone, &size);
 
 		if (managed_zone(zone) && !zone_watermark_ok(zone, 0, size, sc->reclaim_idx, 0))
 			return false;
@@ -5257,6 +5289,7 @@ restart:
 		}
 
 		trace_android_vh_should_memcg_bypass(memcg, sc->priority, &bypass);
+		trace_android_vh_should_memcg_bypass_ext(memcg, sc->priority, &bypass, &op);
 		if (bypass)
 			continue;
 

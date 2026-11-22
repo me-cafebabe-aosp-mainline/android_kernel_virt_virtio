@@ -217,6 +217,7 @@ filegroup(
         "gki/aarch64/symbols/kunit",
         "gki/aarch64/symbols/lenovo",
         "gki/aarch64/symbols/mtk",
+        "gki/aarch64/symbols/nvidia",
         "gki/aarch64/symbols/oplus",
         "gki/aarch64/symbols/pixel",
         "gki/aarch64/symbols/pixel_watch",
@@ -254,12 +255,7 @@ common_kernel(
     kcflags = COMMON_KCFLAGS,
     kmi_enforced = True,
     kmi_symbol_list = "gki/aarch64/symbols/base",
-    # TODO(b/571902075): Re-enable once dedicated 16K/64K symbol lists are added.
-    kmi_symbol_list_strict_mode = select({
-        "//build/kernel/kleaf:page_size_16k": False,
-        "//build/kernel/kleaf:page_size_64k": False,
-        "//conditions:default": True,
-    }),
+    kmi_symbol_list_strict_mode = True,
     make_goals = _GKI_AARCH64_MAKE_GOALS,
     makefile = ":Makefile",
     module_implicit_outs = get_gki_modules_list("arm64") + get_kunit_modules_list("arm64"),
@@ -287,8 +283,7 @@ common_kernel(
     gki_system_dlkm_modules = ":gki_system_dlkm_modules_arm64",
     kcflags = COMMON_KCFLAGS,
     kmi_symbol_list = "gki/aarch64/symbols/base",
-    # TODO(b/571902075): Re-enable once dedicated 16K symbol lists are added.
-    kmi_symbol_list_strict_mode = False,
+    kmi_symbol_list_strict_mode = True,
     make_goals = _GKI_AARCH64_MAKE_GOALS,
     makefile = ":Makefile",
     module_implicit_outs = get_gki_modules_list("arm64") + get_kunit_modules_list("arm64"),
@@ -1476,10 +1471,10 @@ cc_library(
     hdrs = glob([
         "tools/lib/bpf/*.h",
     ]),
-    implementation_deps = [":tools_includes"],
     strip_include_prefix = "tools/lib",
     visibility = ["//visibility:public"],
     deps = ["//prebuilts/kernel-build-tools:imported_libs"],
+    implementation_deps = [":tools_includes"],
 )
 
 pahole(
